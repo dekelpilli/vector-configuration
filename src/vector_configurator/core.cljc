@@ -40,9 +40,10 @@
       (let [section (-> (:kind component)
                         name
                         (str \s)
-                        keyword)]
-        (->> (assoc (:config component) :inputs (:inputs component))
-             (update vector-config section assoc component-name))))
+                        keyword)
+            component-config (cond-> (:config component)
+                                     (not= :sources section) (assoc :inputs (vec (:inputs component))))]
+        (update vector-config section assoc component-name component-config)))
     (assoc (::global c)
       :sources {}
       :transforms {}
@@ -113,7 +114,6 @@
   ;           x4        |      |         |
   ;           |         |      |         |
   ;         source1  source2  source3   source4
-
   (-> (begin-config)
       (add-sink "sink1" ["x1" "x2"] {})
       (add-sink "sink2" ["x2" "x3"] {})
@@ -127,5 +127,4 @@
       (add-transform "x3" ["x4" "source3"] {})
       (add-transform "x4" ["source1" "source2"] {})
       (add-transform "x5" nil {})
-      (remove-component "x5")
       ->config))
