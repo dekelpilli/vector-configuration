@@ -1,0 +1,3 @@
+{:paths   ["src" "resources" "classes"]
+ :deps    {org.clojure/clojure {:mvn/version "1.11.1"}}
+ :aliases {:dev {:extra-deps {clj-commons/clj-yaml {:mvn/version "1.0.27"}}}}}
