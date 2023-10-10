@@ -10,18 +10,24 @@
 (defn- throw-wrong-kind! [component]
   (throw (ex-info "Component kind incompatible with operation" component)))
 
+(defn- namify [?kw]
+  (if (keyword? ?kw) (name ?kw) (str ?kw)))
+
 (defn- put-component
-  ([c name kind inputs config] (->> (->VectorComponent kind inputs config)
+  ([c name kind inputs config] (->> (->VectorComponent kind (into #{} (map namify) inputs) config)
                                     (put-component c name)))
-  ([c name component] (update c ::components assoc name component)))
+  ([c name component] (update c ::components assoc (namify name) component)))
+
+(defn- try-get-component [c name]
+  (get-in c [::components (namify name)]))
 
 (defn- force-get-component [c name]
-  (if-let [component (get-in c [::components name])]
+  (if-let [component (try-get-component c name)]
     component
     (throw-no-component! c name)))
 
 (defn- update-existing-component [c name f]
-  (update c ::components update name
+  (update c ::components update (namify name)
           (fn [component]
             (if component
               (f component)
@@ -31,8 +37,8 @@
   (update component
           :inputs
           #(cond-> %
-                   (% old-name) (-> (disj old-name)
-                                    (conj new-name)))))
+                   (% old-name) (-> (disj (namify old-name))
+                                    (conj (namify new-name))))))
 
 (defn ->config [c]
   (reduce-kv
@@ -56,14 +62,23 @@
              ::components {}}))
 
 (defn add-component [c kind name inputs config]
-  (if (get-in c [::components name])
-    (throw (ex-info (str "Component '" name "' already exists") c))
-    (put-component c kind name (set inputs) config)))
+  (let [name (namify name)]
+    (if (get-in c [::components name])
+      (throw (ex-info (str "Component '" name "' already exists") c))
+      (put-component c kind name inputs config))))
 
 (defn add-source [c name config] (add-component c name :source nil config))
 (defn add-sink [c name inputs config] (add-component c name :sink inputs config))
 
 (defn add-transform [c name inputs config] (add-component c name :transform inputs config))
+
+(defn config-> [config]
+  (let [global (dissoc config :sources :transforms :sinks)]
+    (as-> (reduce-kv add-source global (:sources config)) c
+          (reduce-kv (fn [c name component]
+                       (add-transform c name (:inputs component) (dissoc component :inputs))) c (:transforms config))
+          (reduce-kv (fn [c name component]
+                       (add-sink c name (:inputs component) (dissoc component :inputs))) c (:transforms config)))))
 
 (defn inject-transform-before [c downstream-name name config]
   (let [downstream-component (force-get-component c downstream-name)]
@@ -90,18 +105,30 @@
                                                    (comp kind-order :kind first)
                                                    [[(force-get-component c name) name]
                                                     [(force-get-component c other-name) other-name]])]
-    (->> (update downstream-component :inputs conj upstream-name)
+    (->> (update downstream-component :inputs conj (namify upstream-name))
          (put-component c downstream-name))))
 
 (defn unlink [c name other-name]
   (-> (update-existing-component c name (fn [component] (update component :inputs disj other-name)))
       (update-existing-component other-name (fn [component] (update component :inputs disj name)))))
 
+(defn- remove-from-components [components name]
+  (-> (dissoc components name)
+      (update-vals #(update % :inputs disj name))))
+
 (defn remove-component [c name]
+  (let [name (namify name)]
+    (update c ::components remove-from-components name)))
+
+(defn update-component [c name f]
   (update c ::components
           (fn [components]
-            (-> (dissoc components name)
-                (update-vals #(update % :inputs disj name))))))
+            (let [name (namify name)
+                  component (get components name)]
+              (if-let [result (f component)]
+                (->> (update result :inputs (into #{} (map namify) (:inputs result)))
+                     (assoc components name))
+                (remove-from-components components name))))))
 
 (comment
   ;          root----------------------------\
